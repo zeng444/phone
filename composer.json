@@ -15,6 +15,7 @@
   ],
   "require": {
     "php": ">7.1",
+    "ext-json": "*",
     "swlib/saber": "^1.0"
   }
 }

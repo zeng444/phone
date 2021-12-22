@@ -3,6 +3,12 @@
 namespace Janfish\EPhone;
 
 use RuntimeException;
+use Swlib\Http\Exception\BadResponseException;
+use Swlib\Http\Exception\ClientException;
+use Swlib\Http\Exception\ConnectException;
+use Swlib\Http\Exception\RequestException;
+use Swlib\Http\Exception\ServerException;
+use Swlib\Http\Exception\TooManyRedirectsException;
 use Swlib\Saber;
 
 /**
@@ -13,12 +19,16 @@ use Swlib\Saber;
 class Client
 {
 
-    private $host = 'http://new.02110000.com';
+    private $host = 'http://new.02110000.com:8088';
+//    private $host = 'http://www.janfish.cn:8081';
     private $appId = '9449';
     private $appSecret = 'SmX8SnsRsdZ6GN3SJLLImHzLZz9T5wY4';
 
-    private $proxyHost = '47.112.123.35';
-    private $proxyPort = '34491';
+    private $proxy = 'http://47.112.123.35:34491';
+    //
+    //curl http://new.02110000.com:8088/api/login -H "Content-Type: application/json" -d {"Username":"9449","Password":"SmX8SnsRsdZ6GN3SJLLImHzLZz9T5wY4"}
+    //curl --proxy http://47.112.123.35:34491 -X POST http://new.02110000.com:8088/api/login -H "Content-Type: application/json" -d '{"Username":"9449","Password":"SmX8SnsRsdZ6GN3SJLLImHzLZz9T5wY4"}'
+
 
     const DIAL_ERROR_CODE = [
         '0' => '请求成功',
@@ -75,6 +85,7 @@ class Client
      */
     public function getToken(): string
     {
+
         $body = $this->http('post', '/api/login', $this->protocol([
             'Username' => $this->appId,
             'Password' => $this->appSecret,
@@ -152,24 +163,31 @@ class Client
      */
     private function http(string $method, string $route, string $body = '', string $token = ''): string
     {
-        $saber = Saber::create([
+        $opt = [
             'base_uri' => $this->host,
             'headers' => [
-                'Content-Type' => 'Content-Type:application/json',
+                'Content-Type' => 'application/json',
             ],
-        ]);
-        if ($token) {
-            $saber['headers'][] = 'Authorization:JH ' . $token;
+        ];
+        if ($this->proxy) {
+            $opt['proxy'] = $this->proxy;
         }
-        $response = $saber->$method($route, $body);
+        if ($token) {
+            $opt['headers'][] = 'Authorization:JH ' . $token;
+        }
+        $saber = Saber::create( $opt);
+        $response = $saber->$method($this->host.$route, $body);
+        print_r([(string)$response->getBody()]);
+        return '';
         if (!$response->isSuccess()) {
-            throw new RuntimeException('oss failed');
+            throw new RuntimeException('Request Failed');
         }
         $body = (string)$response->getBody();
         if (!$body) {
-            throw new RuntimeException('oss failed');
+            throw new RuntimeException('Request Failed');
         }
         return $body;
+
     }
 
     /**
