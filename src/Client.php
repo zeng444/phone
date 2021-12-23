@@ -3,13 +3,9 @@
 namespace Janfish\EPhone;
 
 use RuntimeException;
-use Swlib\Http\Exception\BadResponseException;
-use Swlib\Http\Exception\ClientException;
-use Swlib\Http\Exception\ConnectException;
-use Swlib\Http\Exception\RequestException;
-use Swlib\Http\Exception\ServerException;
-use Swlib\Http\Exception\TooManyRedirectsException;
 use Swlib\Saber;
+use Janfish\EPhone\Exception\ServerException;
+use Yurun\Util\HttpRequest;
 
 /**
  * Class Client
@@ -22,9 +18,14 @@ class Client
     private $host = 'http://new.02110000.com:8088';
 //    private $host = 'http://www.janfish.cn:8081';
     private $appId = '9449';
+
     private $appSecret = 'SmX8SnsRsdZ6GN3SJLLImHzLZz9T5wY4';
 
-    private $proxy = 'http://47.112.123.35:34491';
+    private $proxyHost = '47.112.123.35';
+
+    private $proxyPort = '34491';
+
+    const CACHE_FILE_NAME = '.jiuhua.phone.';
     //
     //curl http://new.02110000.com:8088/api/login -H "Content-Type: application/json" -d {"Username":"9449","Password":"SmX8SnsRsdZ6GN3SJLLImHzLZz9T5wY4"}
     //curl --proxy http://47.112.123.35:34491 -X POST http://new.02110000.com:8088/api/login -H "Content-Type: application/json" -d '{"Username":"9449","Password":"SmX8SnsRsdZ6GN3SJLLImHzLZz9T5wY4"}'
@@ -79,38 +80,78 @@ class Client
     }
 
     /**
-     * 获取token
+     * @return array
+     * @author Robert
+     */
+    protected function getCache(): array
+    {
+        $cacheFile = __DIR__ . '/' . self::CACHE_FILE_NAME . $this->appId;
+        if (!file_exists($cacheFile)) {
+            return [];
+        }
+        $data = file_get_contents($cacheFile);
+        if (!$data) {
+            return [];
+        }
+        $data = unserialize($data);
+        if (!isset($data['expiredAt']) || time() > $data['expiredAt']) {
+            return [];
+        }
+        return $data['entity'] ?? [];
+    }
+
+    /**
+     * @param array $data
+     * @param int $expire
+     * @return bool
+     * @author Robert
+     */
+    protected function setCache(array $data, int $expire = 20): bool
+    {
+        $cacheFile = __DIR__ . '/' . self::CACHE_FILE_NAME . $this->appId;
+        if (!file_put_contents($cacheFile, serialize(['entity' => $data, 'expiredAt' => time() + $expire]))) {
+            return false;
+        }
+        return true;
+    }
+
+    /**
      * @return string
+     * @throws ServerException
      * @author Robert
      */
     public function getToken(): string
     {
+        $body = $this->getCache();
+        if (!$body) {
+            $body = $this->httpRequest('/api/login', $this->protocol([
+                'Username' => $this->appId,
+                'Password' => $this->appSecret,
+            ]));
+            if (!$body || !$body = json_decode($body, true)) {
+                throw new ServerException('请求失败');
+            }
+            if (isset($body['Error'])) {
+                throw new ServerException($body['Error'] . ' code:' . $body['result'] ?? '');
+            }
+            $this->setCache($body);
 
-        $body = $this->http('post', '/api/login', $this->protocol([
-            'Username' => $this->appId,
-            'Password' => $this->appSecret,
-        ]));
-        if (!$body || !$body = json_decode($body, true)) {
-            throw new RuntimeException('请求失败');
-        }
-        if (isset($body['Error'])) {
-            throw new RuntimeException($body['Error'] . ' code:' . $body['result']);
         }
         return $body['token'] ?? '';
     }
 
     /**
-     * @param string $mobile
      * @param string $caller
      * @param string $callee
      * @param string $notifyUrl
      * @param array $extent
      * @return array
+     * @throws ServerException
      * @author Robert
      */
-    public function dial(string $mobile, string $caller, string $callee, string $notifyUrl, array $extent = []): array
+    public function dial(string $caller, string $callee, string $notifyUrl, array $extent = []): array
     {
-        $body = $this->http('post', '/api/CallRequest', $this->protocol([
+        $req = [
             'Callid' => $this->makeCallId(),
             'App_id' => $this->appId,
             'Caller' => $caller,
@@ -118,12 +159,13 @@ class Client
             'Call_minutes' => '',//最大呼叫时间(单位分钟),不大于500分钟
             'Extends' => json_encode($extent),//扩展字段
             'Cdr_url' => $notifyUrl,//接收推送话单的url
-        ]), $this->getToken());
+        ];
+        $body = $this->httpRequest('/api/CallRequest', $this->protocol($req), $this->getToken());
         if (!$body || !$body = json_decode($body, true)) {
-            throw new RuntimeException('请求失败');
+            throw new ServerException('请求失败');
         }
         if (isset($body['result']) || $body['result'] != 0) {
-            throw new RuntimeException($body['msg'] . ' code:' . $body['result']);
+            throw new ServerException($body['msg'], (int)$body['result']);
         }
         return $body;
     }
@@ -132,7 +174,7 @@ class Client
      * @return string
      * @author Robert
      */
-    private function makeCallId(): string
+    public function makeCallId(): string
     {
         return sprintf('%04x%04x-%04x-%04x-%04x-%04x%04x%04x',
             mt_rand(0, 0xffff), mt_rand(0, 0xffff),
@@ -154,14 +196,14 @@ class Client
     }
 
     /**
-     * @param string $method
      * @param string $route
      * @param string $body
      * @param string $token
      * @return string
+     * @throws ServerException
      * @author Robert
      */
-    private function http(string $method, string $route, string $body = '', string $token = ''): string
+    private function httpRequest3(string $route, string $body = '', string $token = ''): string
     {
         $opt = [
             'base_uri' => $this->host,
@@ -169,31 +211,95 @@ class Client
                 'Content-Type' => 'application/json',
             ],
         ];
-        if ($this->proxy) {
-            $opt['proxy'] = $this->proxy;
+        if ($this->proxyHost) {
+            $opt['proxy'] = $this->proxyHost;
         }
         if ($token) {
             $opt['headers'][] = 'Authorization:JH ' . $token;
         }
-        $saber = Saber::create( $opt);
-        $response = $saber->$method($this->host.$route, $body);
-        print_r([(string)$response->getBody()]);
-        return '';
+        $saber = Saber::create($opt);
+        $response = $saber->post($this->host . $route, $body);
         if (!$response->isSuccess()) {
-            throw new RuntimeException('Request Failed');
+            throw new ServerException('Request Failed');
         }
         $body = (string)$response->getBody();
         if (!$body) {
-            throw new RuntimeException('Request Failed');
+            throw new ServerException('Request Failed');
+        }
+        return $body;
+
+    }
+
+    private function httpRequest2(string $route, string $body = '', string $token = ''): string
+    {
+        $http = HttpRequest::newSession();
+        if ($this->proxyHost) {
+            $http->proxy($this->proxyHost, $this->proxyPort);
+        }
+        $http->header('Content-Type', 'application/json');
+        if ($token) {
+            $http->header('Authorization', 'JH ' . $token);
+        }
+        $response = $http->post($this->host . $route, $body);
+        if ($response->getStatusCode() != 200) {
+            throw new ServerException('请求失败');
+        }
+        if ($response->errno()) {
+            throw new ServerException($response->getError());
+        }
+        $body = (string)$response->getBody();
+        if (!$body) {
+            throw new ServerException('Request Failed');
         }
         return $body;
 
     }
 
     /**
+     * @param string $route
+     * @param string $body
+     * @param string $token
+     * @return string
+     * @throws ServerException
+     * @author Robert
+     */
+    private function httpRequest(string $route, string $body = '', string $token = ''): string
+    {
+        $ch = curl_init();
+        curl_setopt($ch, CURLOPT_URL, $this->host . $route);
+        $header = [
+            'Content-Type: application/json'
+        ];
+        if ($token) {
+            $header[] = 'Authorization: JH ' . $token;
+        }
+        curl_setopt($ch, CURLOPT_HTTPHEADER, $header);
+        if ($this->proxyHost) {
+            curl_setopt($ch, CURLOPT_PROXY, $this->proxyHost . ":" . $this->proxyPort);
+        }
+        curl_setopt($ch, CURLOPT_RETURNTRANSFER, 1);
+        curl_setopt($ch, CURLOPT_POST, 1);
+        curl_setopt($ch, CURLOPT_POSTFIELDS, $body);
+        $body = curl_exec($ch);
+        if (curl_errno($ch)) {
+            throw new ServerException(curl_error($ch), 0);
+        }
+        $httpStatusCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        if (200 !== $httpStatusCode) {
+            throw new ServerException($body, $httpStatusCode);
+        }
+        if (!$body) {
+            throw new ServerException('Request Failed');
+        }
+        curl_close($ch);
+        return $body;
+    }
+
+    /**
      * 通知接受
      * @param string $raw
      * @return array
+     * @throws ServerException
      * @author Robert
      */
     public function notify(string $raw): array
@@ -202,6 +308,9 @@ class Client
         //{"App_id":"200","Call_answertime":"2017-08-22 15:54:10","Call_bill":0.07,"Call_duration":6,"Call_endtime":"2017-08-22 15:54:16","Call_id":"9a530b67-8742-11e7-a924-00163e0ea174appIp:116.231.90.150","Call_starttime":"2017-08-22 15:54:01","Callee":"+8617717028007","Caller":"+8618939892185","Request_time":"2017-08-22 23:53:46"}
         if (!$data) {
             throw new \RuntimeException('电话不存在');
+        }
+        if (!isset($data['App_id']) || $this->appId != $data['App_id']) {
+            throw new ServerException('App_id is not correct');
         }
         return $data;
 
