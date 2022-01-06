@@ -26,6 +26,8 @@ class Client
     protected $proxyPort = '34491';
 
     const CACHE_FILE_NAME = '.jiuhua.phone.';
+
+    const TOKEN_EXPIRE_TIME = 86000;
     //
     //curl http://new.02110000.com:8088/api/login -H "Content-Type: application/json" -d {"Username":"9449","Password":"SmX8SnsRsdZ6GN3SJLLImHzLZz9T5wY4"}
     //curl --proxy http://47.112.123.35:34491 -X POST http://new.02110000.com:8088/api/login -H "Content-Type: application/json" -d '{"Username":"9449","Password":"SmX8SnsRsdZ6GN3SJLLImHzLZz9T5wY4"}'
@@ -134,7 +136,7 @@ class Client
             if (isset($body['Error'])) {
                 throw new ServerException($body['Error'] . ' code:' . $body['result'] ?? '');
             }
-            $this->setCache($body);
+            $this->setCache($body, self::TOKEN_EXPIRE_TIME);
 
         }
         return $body['token'] ?? '';
