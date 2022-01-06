@@ -15,15 +15,15 @@ use Yurun\Util\HttpRequest;
 class Client
 {
 
-    private $host = 'http://new.02110000.com:8088';
+    protected $host = 'http://new.02110000.com:8088';
 //    private $host = 'http://www.janfish.cn:8081';
-    private $appId = '9449';
+    protected $appId = '9449';
 
-    private $appSecret = 'SmX8SnsRsdZ6GN3SJLLImHzLZz9T5wY4';
+    protected $appSecret = 'SmX8SnsRsdZ6GN3SJLLImHzLZz9T5wY4';
 
-    private $proxyHost = '47.112.123.35';
+    protected $proxyHost = '47.112.123.35';
 
-    private $proxyPort = '34491';
+    protected $proxyPort = '34491';
 
     const CACHE_FILE_NAME = '.jiuhua.phone.';
     //
