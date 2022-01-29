@@ -166,7 +166,10 @@ class Client
         if (!$body || !$body = json_decode($body, true)) {
             throw new ServerException('请求失败');
         }
-        if (isset($body['result']) || $body['result'] != 0) {
+        if (!isset($body['result'])) {
+            throw new ServerException($body['msg'], 500);
+        }
+        if ($body['result'] != 0) {
             throw new ServerException($body['msg'], (int)$body['result']);
         }
         return $body;
